@@ -11,7 +11,7 @@ main()
 
     auto start = std::chrono::steady_clock::now();
 
-    for(size_t i = 0; i < 10000; i++)
+    for(size_t i = 0; i < SIZE_MAX; i++)
     {
         for(size_t j = 0; j < 1000; j++)
         {

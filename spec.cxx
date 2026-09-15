@@ -1,5 +1,9 @@
-#include <stdint.h>
 #include <sys/mman.h>
+#include <thread>
+#include <mutex>
+#include <queue>
+#include <condition_variable>
+#include <iostream>
 
 class alloc
 {
@@ -17,7 +21,32 @@ class alloc
     void *returning;
     size_t ret_off = 0;
     size_t ret_size = 0;
+
+    std::thread wt;
 };
+
+static bool running = true;
+static std::mutex mtx;
+static std::condition_variable cv;
+static std::queue<std::pair<void *, size_t>> freelist;
+
+void
+worker()
+{
+    while(running)
+    {
+        std::unique_lock<std::mutex> lock(mtx);
+
+        cv.wait(lock, [] { return !freelist.empty() || !running; });
+
+        if(!running && freelist.empty())
+            return;
+
+        int ret = madvise(freelist.front().first, freelist.front().second,
+                          MADV_DONTNEED);
+        freelist.pop();
+    }
+}
 
 alloc::alloc(size_t soft_max_mem)
 {
@@ -28,6 +57,8 @@ alloc::alloc(size_t soft_max_mem)
     returning = mmap(nullptr, 1ULL << 40, PROT_READ | PROT_WRITE,
                      MAP_ANON | MAP_PRIVATE, 0, 0);
     soft_max = soft_max_mem;
+
+    wt = std::thread(worker);
 }
 
 void *
@@ -49,6 +80,17 @@ alloc::allocate(size_t size)
 }
 
 void
+alloc::unallocate(void *ptr)
+{
+    size_t size = *((char *)allocated + (intptr_t)ptr - (intptr_t)map);
+    {
+        std::lock_guard<std::mutex> lock(mtx);
+        freelist.push({ ptr, size });
+    }
+    cv.notify_one();
+}
+
+/*void
 alloc::unallocate(void *ptr)
 {
     if(total_mem > soft_max)
@@ -80,4 +122,4 @@ alloc::unallocate(void *ptr)
         ret_off += sizeof(size);
         ret_size++;
     }
-}
+}*/
